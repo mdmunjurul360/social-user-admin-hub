@@ -1,0 +1,144 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitives & Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+             (
+               request.auth.token.email == 'munjurul246@gmail.com' ||
+               request.auth.token.email == 'munjurul41104@gmail.com' ||
+               (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+             );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // --- User Profiles ---
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.uid is string && data.uid == userId &&
+               data.email is string && data.email.size() <= 256 &&
+               data.role in ['admin', 'user'] &&
+               data.displayName is string && data.displayName.size() <= 200;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) &&
+                       (incoming().role == 'user' || 
+                        request.auth.token.email == 'munjurul246@gmail.com' || 
+                        request.auth.token.email == 'munjurul41104@gmail.com');
+      
+      allow update: if (isOwner(userId) && isValidUser(incoming()) &&
+                       (incoming().role == existing().role || 
+                        request.auth.token.email == 'munjurul246@gmail.com' || 
+                        request.auth.token.email == 'munjurul41104@gmail.com') &&
+                       incoming().email == existing().email) ||
+                    (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role']));
+      
+      allow delete: if isAdmin();
+    }
+
+    // --- Posts ---
+    match /posts/{postId} {
+      function isValidPost(data) {
+        return data.title is string && data.title.size() <= 200 &&
+               data.content is string && data.content.size() <= 10000 &&
+               data.type in ['text', 'video', 'image'] &&
+               (data.type != 'video' || (data.videoUrl is string && data.videoUrl.size() <= 500)) &&
+               (data.type != 'image' || (data.imageUrl is string && data.imageUrl.size() <= 1500000)) &&
+               data.authorId is string &&
+               data.likesCount is int &&
+               data.commentsCount is int;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Public feed for all authenticated users
+      
+      allow create: if isAdmin() && isValidId(postId) && isValidPost(incoming()) &&
+                       incoming().authorId == request.auth.uid &&
+                       incoming().likesCount == 0 &&
+                       incoming().commentsCount == 0 &&
+                       incoming().createdAt == request.time;
+
+      allow update: if (isAdmin() && isValidPost(incoming()) && 
+                        incoming().authorId == existing().authorId &&
+                        incoming().createdAt == existing().createdAt &&
+                        incoming().updatedAt == request.time) ||
+                    (isSignedIn() && 
+                     incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount']) &&
+                     (
+                       (incoming().likesCount == existing().likesCount + 1 || incoming().likesCount == existing().likesCount - 1) ||
+                       (incoming().commentsCount == existing().commentsCount + 1 || incoming().commentsCount == existing().commentsCount - 1)
+                     )
+                    );
+      
+      allow delete: if isAdmin();
+    }
+
+    // --- Comments ---
+    match /posts/{postId}/comments/{commentId} {
+      function isValidComment(data) {
+        return data.postId == postId &&
+               data.userId == request.auth.uid &&
+               data.content is string && data.content.size() <= 2000;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() && 
+                       isValidId(commentId) && isValidComment(incoming()) &&
+                       exists(/databases/$(database)/documents/posts/$(postId)) &&
+                       incoming().createdAt == request.time;
+      
+      allow update, delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- Likes ---
+    match /posts/{postId}/likes/{userId} {
+      function isValidLike(data) {
+        return data.postId == postId &&
+               data.userId == request.auth.uid;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+
+      allow create: if isOwner(userId) && isValidId(userId) && isValidLike(incoming()) &&
+                       exists(/databases/$(database)/documents/posts/$(postId));
+      
+      allow delete: if isOwner(userId);
+    }
+  }
+}

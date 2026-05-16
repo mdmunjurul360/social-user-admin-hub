@@ -1,0 +1,6 @@
+{
+  "name": "Social Connect & Admin Hub",
+  "description": "A real-time dual-interface application with a user feed for viewing and interacting with posts, and an admin dashboard for content management, powered by Firebase Auth and Firestore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
