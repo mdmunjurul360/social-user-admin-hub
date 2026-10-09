@@ -8,7 +8,7 @@ const Admin = () => {
   const [content, setContent] = useState("");
 
   // 🔐 Admin protect
-  if (user?.email !== "islammunjurul468@gmail.com") {
+  if (user?.email !== "") {
     return <h1 className="text-center mt-20 text-xl">❌ Not Authorized</h1>;
   }
 
